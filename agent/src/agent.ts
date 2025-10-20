@@ -8,7 +8,7 @@ import { getRetriever } from "./retriever";
 import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { createRetrieverTool } from "langchain/tools/retriever";
 import { ChatOpenAI } from "@langchain/openai";
-import { AIMessage } from "@langchain/core/messages";
+import { AIMessage, isHumanMessage } from "@langchain/core/messages";
 import { gradeDocumentsSchema } from "./types";
 import { generatePrompt, gradingPrompt, rewritePrompt } from "./prompts";
 import { CopilotKitStateAnnotation } from "@copilotkit/sdk-js/langgraph";
@@ -124,7 +124,9 @@ async function createGraph() {
     async function rewrite(state: AgentState) {
       try {
         const { messages, retryCount = 0 } = state;
-        const question = messages.at(0)?.content;
+        // Get the last human message (most recent user query)
+        const lastHumanMessage = messages.filter(m => isHumanMessage(m)).at(-1);
+        const question = lastHumanMessage?.content;
 
         if (!question) {
           throw new Error("No question found to rewrite");
