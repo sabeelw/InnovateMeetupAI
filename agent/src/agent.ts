@@ -8,7 +8,7 @@ import { getRetriever } from "./retriever";
 import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { createRetrieverTool } from "langchain/tools/retriever";
 import { ChatOpenAI } from "@langchain/openai";
-import { AIMessage, isHumanMessage } from "@langchain/core/messages";
+import { AIMessage, isHumanMessage, isToolMessage } from "@langchain/core/messages";
 import { gradeDocumentsSchema } from "./types";
 import { generatePrompt, gradingPrompt, rewritePrompt } from "./prompts";
 import { CopilotKitStateAnnotation } from "@copilotkit/sdk-js/langgraph";
@@ -84,8 +84,8 @@ async function createGraph() {
           };
         }
 
-        const question = messages.at(0)?.content;
-        const context = messages.at(-1)?.content;
+        const question = messages.filter(m => isHumanMessage(m)).at(-1)?.content;
+        const context = messages.filter(m => isToolMessage(m)).at(-1)?.content;
 
         if (!question || !context) {
           console.warn("Missing question or context, proceeding to generate");
@@ -105,7 +105,7 @@ async function createGraph() {
           context,
         });
 
-        const decision = score.binaryScore === "yes" ? "generate" : "rewrite";
+        const decision = score.binaryScore === true ? "generate" : "rewrite";
 
         return {
           messages: [new AIMessage(decision)],
@@ -158,8 +158,8 @@ async function createGraph() {
     async function generate(state: AgentState) {
       try {
         const { messages } = state;
-        const question = messages.at(0)?.content ?? "Tell me about Harry Potter";
-        const context = messages.at(-1)?.content ?? "No context available";
+        const question = messages.filter(m => isHumanMessage(m)).at(-1)?.content ?? "Tell me about Harry Potter";
+        const context = messages.filter(m => isToolMessage(m)).at(-1)?.content ?? "No context available";
 
         if (!question) {
           throw new Error("No question found for generation");
