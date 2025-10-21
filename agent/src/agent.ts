@@ -89,14 +89,39 @@ async function createGraph() {
       }
     }
 
-    // Routing function - Decides which path to take after router
-    async function generate(state: AgentState) {
+    // Node 3: Retrieve - Gets relevant documents from the knowledge base
+    async function retrieve(state: AgentState) {
       try {
         const { messages } = state;
         const lastMessage = messages.filter(m => isHumanMessage(m)).at(-1);
         const question = typeof lastMessage?.content === 'string' ? lastMessage.content : "";
 
         // Get retrieved context
+        const docs = await retriever.invoke(question);
+        const context = docs.map(doc => doc.pageContent).join("\n\n");
+
+        console.log(`Retrieved ${docs.length} documents for question: ${question.substring(0, 50)}...`);
+
+        // Return state with context stored in messages
+        return {
+          messages: state.messages,
+        };
+      } catch (error) {
+        console.error("Error in retrieve:", error);
+        return {
+          messages: state.messages,
+        };
+      }
+    }
+
+    // Node 4: Generate - Creates answer based on retrieved context
+    async function generate(state: AgentState) {
+      try {
+        const { messages } = state;
+        const lastMessage = messages.filter(m => isHumanMessage(m)).at(-1);
+        const question = typeof lastMessage?.content === 'string' ? lastMessage.content : "";
+
+        // Retrieve documents again (since we're simplifying without storing in state)
         const docs = await retriever.invoke(question);
         const context = docs.map(doc => doc.pageContent).join("\n\n");
 
@@ -122,7 +147,7 @@ async function createGraph() {
     }
 
     // Routing function - Decides which path to take after router
-    async function decideRoute(state: AgentState): Promise<"chitChat" | "generate"> {
+    async function decideRoute(state: AgentState): Promise<"chitChat" | "retrieve"> {
       try {
         const { messages } = state;
         const lastMessage = messages.filter(m => isHumanMessage(m)).at(-1);
@@ -137,7 +162,7 @@ async function createGraph() {
           question,
         });
 
-        return response.path === "chit-chat" ? "chitChat" : "generate";
+        return response.path === "chit-chat" ? "chitChat" : "retrieve";
       } catch (error) {
         console.error("Error in decideRoute:", error);
         return "chitChat";
@@ -149,11 +174,13 @@ async function createGraph() {
     const builder = new StateGraph(AgentStateAnnotation)
       .addNode("router", router)
       .addNode("chitChat", chitChat)
+      .addNode("retrieve", retrieve)
       .addNode("generate", generate)
       // Add edges
       .addEdge(START, "router")
       .addConditionalEdges("router", decideRoute)
       .addEdge("chitChat", END)
+      .addEdge("retrieve", "generate")
       .addEdge("generate", END)
 
 
