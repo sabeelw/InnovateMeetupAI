@@ -42,9 +42,8 @@ export const chitChatPrompt = ChatPromptTemplate.fromTemplate(
 // Generate prompt - Answers based on retrieved context
 export const generatePrompt = ChatPromptTemplate.fromTemplate(
     `You are an assistant for question-answering tasks about Harry Potter.
-    Use the following pieces of retrieved context to answer the question.
+    Only use the following pieces of retrieved context to answer the question. Answer only based on that context.
     If you don't know the answer based on the context, just say that you don't know.
-    Use three sentences maximum and keep the answer concise.
     
     Question: {question}
     Context: {context}

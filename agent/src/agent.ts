@@ -18,6 +18,10 @@ const llmModel = "gpt-4o";
 // 1. Define our agent state
 const AgentStateAnnotation = Annotation.Root({
   ...CopilotKitStateAnnotation.spec,
+  context: Annotation<string>({
+    reducer: (state, update) => update ?? state,
+    default: () => "",
+  }),
 });
 
 // 2. Define the type for our agent state
@@ -102,29 +106,26 @@ async function createGraph() {
 
         console.log(`Retrieved ${docs.length} documents for question: ${question.substring(0, 50)}...`);
 
-        // Return state with context stored in messages
+        // Store context in state for generate node to use
         return {
-          messages: state.messages,
+          context,
         };
       } catch (error) {
         console.error("Error in retrieve:", error);
         return {
-          messages: state.messages,
+          context: "",
         };
       }
     }
 
-    // Node 4: Generate - Creates answer based on retrieved context
+    // Node 4: Generate - Creates answer based on retrieved context from state
     async function generate(state: AgentState) {
       try {
-        const { messages } = state;
+        const { messages, context } = state;
         const lastMessage = messages.filter(m => isHumanMessage(m)).at(-1);
         const question = typeof lastMessage?.content === 'string' ? lastMessage.content : "";
 
-        // Retrieve documents again (since we're simplifying without storing in state)
-        const docs = await retriever.invoke(question);
-        const context = docs.map(doc => doc.pageContent).join("\n\n");
-
+        // Use context from state (retrieved by the retrieve node)
         const llm = new ChatOpenAI({
           model: llmModel,
           temperature: 0.4,
