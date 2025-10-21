@@ -1,29 +1,23 @@
 /**
  * This is the main entry point for the agent.
- * It defines the workflow graph, state, tools, nodes and edges.
+ * It defines a simplified RAG workflow with two paths:
+ * 1. Chit-chat path: For greetings and general Harry Potter conversation
+ * 2. Retrieval path: For specific Harry Potter queries
  */
 
 import { StateGraph, START, END, Annotation, MemorySaver } from "@langchain/langgraph";
 import { getRetriever } from "./retriever";
-import { ToolNode } from '@langchain/langgraph/prebuilt';
-import { createRetrieverTool } from "langchain/tools/retriever";
 import { ChatOpenAI } from "@langchain/openai";
-import { AIMessage, isHumanMessage, isToolMessage } from "@langchain/core/messages";
-import { gradeDocumentsSchema } from "./types";
-import { generatePrompt, generateQueryOrRespondPrompt, gradingPrompt, rewritePrompt } from "./prompts";
+import { AIMessage, isHumanMessage } from "@langchain/core/messages";
+import { routerSchema } from "./types";
+import { chitChatPrompt, generatePrompt, routerPrompt } from "./prompts";
 import { CopilotKitStateAnnotation } from "@copilotkit/sdk-js/langgraph";
 
 const llmModel = "gpt-4o";
-const MAX_RETRIES = 2;
 
-// 1. Define our agent state, which includes CopilotKit state to
-//    provide actions to the state.
+// 1. Define our agent state
 const AgentStateAnnotation = Annotation.Root({
   ...CopilotKitStateAnnotation.spec,
-  retryCount: Annotation<number>({
-    reducer: (state, update) => update ?? state,
-    default: () => 0,
-  }),
 });
 
 // 2. Define the type for our agent state
@@ -35,18 +29,8 @@ async function createGraph() {
     // Wait for the retriever to be initialized
     const retriever = await getRetriever();
 
-    const tool = createRetrieverTool(
-      retriever,
-      {
-        name: "retrieve_harry_potter_info",
-        description:
-          "Search and return information about Harry Potter books, characters, and themes etc.",
-      },
-    );
-    const tools = [tool];
-
-    // LangGraph Nodes for Innovate Meetup RAG App
-    async function generateQueryOrRespond(state: AgentState) {
+    // Node 1: Router - Decides between chit-chat and retrieval
+    async function router(state: AgentState) {
       try {
         const { messages } = state;
 
@@ -54,187 +38,125 @@ async function createGraph() {
           throw new Error("No messages in state");
         }
 
-        const model = new ChatOpenAI({
-          model: llmModel,
-          temperature: 0,
-        }).bindTools(tools);
-
-        const response = await generateQueryOrRespondPrompt.pipe(model).invoke({
-          question: messages.filter(m => isHumanMessage(m)).at(-1)?.content ?? "",
-        });
-        return {
-          messages: [response],
-        };
-      } catch (error) {
-        console.error("Error in generateQueryOrRespond:", error);
-        return {
-          messages: [new AIMessage("I encountered an error processing your request. Please try again.")],
-        };
-      }
-    }
-
-    async function gradeDocuments(state: AgentState) {
-      try {
-        const { messages, retryCount = 0 } = state;
-
-        // If we've retried too many times, just generate with what we have
-        if (retryCount >= MAX_RETRIES) {
-          console.warn(`Max retries (${MAX_RETRIES}) reached, proceeding to generate`);
-          return {
-            messages: [new AIMessage("generate")],
-            retryCount,
-          };
-        }
-
-        const question = messages.filter(m => isHumanMessage(m)).at(-1)?.content;
-        const context = messages.filter(m => isToolMessage(m)).at(-1)?.content;
-
-        if (!question || !context) {
-          console.warn("Missing question or context, proceeding to generate");
-          return {
-            messages: [new AIMessage("generate")],
-            retryCount,
-          };
-        }
+        const lastMessage = messages.at(-1);
+        const question = typeof lastMessage?.content === 'string' ? lastMessage.content : "";
 
         const model = new ChatOpenAI({
           model: llmModel,
           temperature: 0,
-        }).withStructuredOutput(gradeDocumentsSchema, { name: "gradeDocuments" });
+        }).withStructuredOutput(routerSchema);
 
-        const score = await gradingPrompt.pipe(model).invoke({
+        const response = await routerPrompt.pipe(model).invoke({
           question,
-          context,
         });
 
-        const decision = score.binaryScore === true ? "generate" : "rewrite";
-
+        console.log("Router decision:", response.path);
         return {
-          messages: [new AIMessage(decision)],
-          retryCount: decision === "rewrite" ? retryCount + 1 : retryCount,
+          messages: state.messages,
         };
       } catch (error) {
-        console.error("Error in gradeDocuments:", error);
-        // On error, proceed to generate with available context
+        console.error("Error in router:", error);
         return {
-          messages: [new AIMessage("generate")],
-          retryCount: state.retryCount ?? 0,
+          messages: state.messages,
         };
       }
     }
 
-    async function rewrite(state: AgentState) {
-      try {
-        const { messages, retryCount = 0 } = state;
-        // Get the last human message (most recent user query)
-        const lastHumanMessage = messages.filter(m => isHumanMessage(m)).at(-1);
-        const question = lastHumanMessage?.content;
-
-        if (!question) {
-          throw new Error("No question found to rewrite");
-        }
-
-        console.log(`Rewriting query (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-
-        const model = new ChatOpenAI({
-          model: llmModel,
-          temperature: 0.3, // Slightly higher temperature for query variation
-        });
-
-        const response = await rewritePrompt.pipe(model).invoke({ question });
-        return {
-          messages: [response],
-          retryCount,
-        };
-      } catch (error) {
-        console.error("Error in rewrite:", error);
-        // Return original question if rewrite fails
-        const { messages } = state;
-        return {
-          messages: [messages.at(0) ?? new AIMessage("Tell me about Harry Potter")],
-          retryCount: state.retryCount ?? 0,
-        };
-      }
-    }
-
-    async function generate(state: AgentState) {
+    // Node 2: Chit-chat - Handles greetings and general Harry Potter conversation
+    async function chitChat(state: AgentState) {
       try {
         const { messages } = state;
-        const question = messages.filter(m => isHumanMessage(m)).at(-1)?.content ?? "Tell me about Harry Potter";
-        const context = messages.filter(m => isToolMessage(m)).at(-1)?.content ?? "No context available";
-
-        if (!question) {
-          throw new Error("No question found for generation");
-        }
+        const lastMessage = messages.filter(m => isHumanMessage(m)).at(-1);
+        const question = typeof lastMessage?.content === 'string' ? lastMessage.content : "";
 
         const llm = new ChatOpenAI({
           model: llmModel,
-          temperature: 0.4, // Slightly higher for more natural responses
+          temperature: 0.7, // Higher temperature for more natural conversation
         });
 
-        const ragChain = generatePrompt.pipe(llm);
+        const response = await chitChatPrompt.pipe(llm).invoke({
+          question,
+        });
 
-        const response = await ragChain.invoke({
+        return {
+          messages: [response],
+        };
+      } catch (error) {
+        console.error("Error in chitChat:", error);
+        return {
+          messages: [new AIMessage("Hello! How can I help you with Harry Potter today?")],
+        };
+      }
+    }
+
+    // Routing function - Decides which path to take after router
+    async function generate(state: AgentState) {
+      try {
+        const { messages } = state;
+        const lastMessage = messages.filter(m => isHumanMessage(m)).at(-1);
+        const question = typeof lastMessage?.content === 'string' ? lastMessage.content : "";
+
+        // Get retrieved context
+        const docs = await retriever.invoke(question);
+        const context = docs.map(doc => doc.pageContent).join("\n\n");
+
+        const llm = new ChatOpenAI({
+          model: llmModel,
+          temperature: 0.4,
+        });
+
+        const response = await generatePrompt.pipe(llm).invoke({
           context,
           question,
         });
 
         return {
           messages: [response],
-          retryCount: 0, // Reset retry count after successful generation
         };
       } catch (error) {
         console.error("Error in generate:", error);
         return {
           messages: [new AIMessage("I apologize, but I encountered an error generating a response. Please try asking your question again.")],
-          retryCount: 0,
         };
       }
     }
 
-    function shouldRetrieve(state: AgentState) {
+    // Routing function - Decides which path to take after router
+    async function decideRoute(state: AgentState): Promise<"chitChat" | "generate"> {
       try {
         const { messages } = state;
-        const lastMessage = messages.at(-1);
+        const lastMessage = messages.filter(m => isHumanMessage(m)).at(-1);
+        const question = typeof lastMessage?.content === 'string' ? lastMessage.content : "";
 
-        if (lastMessage && "tool_calls" in lastMessage && Array.isArray((lastMessage as any).tool_calls) && (lastMessage as any).tool_calls.length > 0) {
-          return "retrieve";
-        }
-        return END;
+        const model = new ChatOpenAI({
+          model: llmModel,
+          temperature: 0,
+        }).withStructuredOutput(routerSchema);
+
+        const response = await routerPrompt.pipe(model).invoke({
+          question,
+        });
+
+        return response.path === "chit-chat" ? "chitChat" : "generate";
       } catch (error) {
-        console.error("Error in shouldRetrieve:", error);
-        return END;
+        console.error("Error in decideRoute:", error);
+        return "chitChat";
       }
     }
 
-    const toolNode = new ToolNode(tools);
 
-    // Define the graph
+    // Define the simplified graph with two clear paths
     const builder = new StateGraph(AgentStateAnnotation)
-      .addNode("generateQueryOrRespond", generateQueryOrRespond)
-      .addNode("retrieve", toolNode)
-      .addNode("gradeDocuments", gradeDocuments)
-      .addNode("rewrite", rewrite)
+      .addNode("router", router)
+      .addNode("chitChat", chitChat)
       .addNode("generate", generate)
       // Add edges
-      .addEdge(START, "generateQueryOrRespond")
-      // Decide whether to retrieve
-      .addConditionalEdges("generateQueryOrRespond", shouldRetrieve)
-      .addEdge("retrieve", "gradeDocuments")
-      // Edges taken after grading documents
-      .addConditionalEdges(
-        "gradeDocuments",
-        // Route based on grading decision
-        (state) => {
-          const lastMessage = state.messages.at(-1);
-          if (lastMessage && lastMessage.content === "generate") {
-            return "generate";
-          }
-          return "rewrite";
-        }
-      )
+      .addEdge(START, "router")
+      .addConditionalEdges("router", decideRoute)
+      .addEdge("chitChat", END)
       .addEdge("generate", END)
-      .addEdge("rewrite", "generateQueryOrRespond");
+
+
 
     // Compile
     const memory = new MemorySaver();
