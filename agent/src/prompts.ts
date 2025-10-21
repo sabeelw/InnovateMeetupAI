@@ -1,6 +1,17 @@
 
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 
+export const generateQueryOrRespondPrompt = ChatPromptTemplate.fromTemplate(
+    `You task is to route the user question to either:
+
+    1. "retrieve" - if the question is about harry potter specific information or details.
+        Question: {question}
+    2. "respond" - respond to greeting, general chit-chat questions but do not respond to any queries not related to Harry Potter, just say "I'm sorry, I can only provide information about Harry Potter."
+    
+    Question: {question}
+    `
+);
+
 export const gradingPrompt = ChatPromptTemplate.fromTemplate(
     `You are a grader assessing relevance of retrieved docs to a user question.
     Here are the retrieved docs:

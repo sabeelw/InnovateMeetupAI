@@ -10,7 +10,7 @@ import { createRetrieverTool } from "langchain/tools/retriever";
 import { ChatOpenAI } from "@langchain/openai";
 import { AIMessage, isHumanMessage, isToolMessage } from "@langchain/core/messages";
 import { gradeDocumentsSchema } from "./types";
-import { generatePrompt, gradingPrompt, rewritePrompt } from "./prompts";
+import { generatePrompt, generateQueryOrRespondPrompt, gradingPrompt, rewritePrompt } from "./prompts";
 import { CopilotKitStateAnnotation } from "@copilotkit/sdk-js/langgraph";
 
 const llmModel = "gpt-4o";
@@ -59,7 +59,9 @@ async function createGraph() {
           temperature: 0,
         }).bindTools(tools);
 
-        const response = await model.invoke(messages);
+        const response = await generateQueryOrRespondPrompt.pipe(model).invoke({
+          question: messages.filter(m => isHumanMessage(m)).at(-1)?.content ?? "",
+        });
         return {
           messages: [response],
         };
