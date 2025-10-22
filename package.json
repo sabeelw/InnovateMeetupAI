@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"npm run dev:ui\" \"npm run dev:agent\" --names ui,agent --prefix-colors blue,green --kill-others",
+    "dev": "concurrently \"npm run dev:agent\"  \"npm run dev:ui\" --names ui,agent --prefix-colors blue,green --kill-others",
     "dev:studio": "concurrently \"npm run dev:ui\" \"npm run dev:agent:studio\" --names ui,agent --prefix-colors blue,green --kill-others",
-    "dev:agent": "cd agent && npx @langchain/langgraph-cli dev --port 8123 --no-browser",
-    "dev:agent:studio": "cd agent && npx @langchain/langgraph-cli dev --port 8123",
+    "dev:agent": "cd agent && npx @langchain/langgraph-cli dev --port 8888 --no-browser",
+    "dev:agent:studio": "cd agent && npx @langchain/langgraph-cli dev --port 8888",
     "dev:ui": "next dev",
     "build": "next build",
     "start": "next start",
